@@ -1,7 +1,7 @@
 # svitlo-guard
 
 North Star: агенти Claude Code встигають дійти до точки відновлення перед відключенням світла за графіком, а сесія відновлюється однією командою.
-Поточна фаза: v0.1.0 — встановлено собі (user scope, svitlo@svitlo-guard читається прямо з цієї теки, після правок — /reload-plugins); публікація на GitHub не зроблена (2026-10-08).
+Поточна фаза: v0.1.0 опубліковано — https://github.com/kirilpolishchukdev-art/svitlo-guard (реліз v0.1.0, main захищена від force-push). Локально встановлено з цієї теки (/reload-plugins після правок). Коміти — від kirilpolishchukdev-art з noreply-поштою (git config репо). Пушити: gh auth switch -u kirilpolishchukdev-art, потім повернути netkuluoko-png (2026-10-08).
 
 ## Мапа репо
 - `hooks/register.tsx` — хуки мода (function hooks, Claude Code ≥ 2.1.293): таймер, `tool.call`, `prompt.submit`, `/svitlo`, інструменти `mcp__svitlo__*`, плашка `AbovePrompt`.
