@@ -1,0 +1,3 @@
+# Типи, які рушій Claude Code кладе поруч із модом при кожному завантаженні
+.claude-plugin/types/
+node_modules/
