@@ -51,10 +51,60 @@ export function normalizeSlug(slug: string): string {
   return OLD_TO_NEW[slug] ?? slug
 }
 
+// Розбирає відповідь API. Помилки — лише власні фіксовані тексти: повідомлення
+// JSON.parse цитує шматок відповіді, а він потрапив би до моделі.
 export function parseFeed(text: string): Feed {
-  const raw = JSON.parse(text) as Feed & { body?: unknown }
-  if (typeof raw.body === 'string') return JSON.parse(raw.body) as Feed
-  return raw
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+    const body = (raw as { body?: unknown } | null)?.body
+    if (typeof body === 'string') raw = JSON.parse(body)
+  } catch {
+    throw new Error('відповідь не у форматі JSON')
+  }
+  return sanitizeFeed(raw)
+}
+
+// Чужі дані → лише значення відомої форми. Рядки з фіда потрапляють у контекст
+// агента як примітки svitlo, тож усе, що не схоже на id, назву, чергу чи дату, відкидається.
+const SAFE_ID = /^[a-z0-9-]{1,48}$/
+const SAFE_NAME = /^[\p{L}\p{M} .'’ʼ()-]{1,60}$/u
+const SAFE_QUEUE = /^\d{1,2}(\.\d{1,2})?$/
+const SAFE_DATE = /^\d{4}-\d{2}-\d{2}$/
+const SAFE_SLOT = /^([01]\d|2[0-3]):[03]0$/
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const safeDate = (v: unknown) => (typeof v === 'string' && SAFE_DATE.test(v) ? v : undefined)
+
+export function sanitizeFeed(raw: unknown): Feed {
+  if (!isObject(raw)) return {}
+  const regions: FeedRegion[] = []
+  for (const r of Array.isArray(raw.regions) ? raw.regions.slice(0, 64) : []) {
+    if (!isObject(r) || typeof r.cpu !== 'string' || !SAFE_ID.test(r.cpu)) continue
+    const region: FeedRegion = { cpu: r.cpu, emergency: r.emergency === true, schedule: null }
+    if (typeof r.name_ua === 'string' && SAFE_NAME.test(r.name_ua.trim())) region.name_ua = r.name_ua.trim()
+    if (isObject(r.schedule)) {
+      const schedule: Record<string, Record<string, Slots>> = {}
+      for (const [queue, days] of Object.entries(r.schedule).slice(0, 128)) {
+        if (!SAFE_QUEUE.test(queue)) continue
+        const byDay: Record<string, Slots> = {}
+        schedule[queue] = byDay
+        if (!isObject(days)) continue
+        for (const [day, slots] of Object.entries(days).slice(0, 7)) {
+          if (!SAFE_DATE.test(day) || !isObject(slots)) continue
+          const clean: Slots = {}
+          for (const [label, code] of Object.entries(slots)) {
+            const n = typeof code === 'number' || typeof code === 'string' ? Number(code) : NaN
+            if (SAFE_SLOT.test(label) && (n === 0 || n === 1 || n === 2)) clean[label] = n
+          }
+          byDay[day] = clean
+        }
+      }
+      region.schedule = schedule
+    }
+    regions.push(region)
+  }
+  return { date_today: safeDate(raw.date_today), date_tomorrow: safeDate(raw.date_tomorrow), regions }
 }
 
 // "черга 3.1", "3,1", "GPV3.1" → "3.1"; "3" лишається "3".

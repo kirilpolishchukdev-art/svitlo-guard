@@ -42,18 +42,29 @@ const STALE_MS = 45 * MIN
 const SNAPSHOT_MS = MIN
 const KEEP_SESSIONS_MS = 36 * 60 * MIN
 const AHEAD_NOTE_MIN = 90
+const MAX_FEED_CHARS = 5_000_000
+const USER_AGENT = 'svitlo-guard/0.1 (Claude Code plugin)'
 
 const bandRef = atom({ plugin: 'svitlo', key: 'band' } as const, null)
 const hiddenRef = atom({ plugin: 'svitlo', key: 'bandHidden' } as const, '')
 
 const keyOf = (c: Config) => `${c.region}|${c.queue}`
 const sameDir = (a: string, b: string) => a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase()
-const errText = (err: unknown) => (err instanceof Error ? err.message : String(err))
+// У статус і до моделі йдуть лише наші власні тексти помилок.
+const KNOWN_ERRORS = /^(HTTP \d{3}|мережа недоступна|завелика відповідь|відповідь не у форматі JSON)$/
+const errText = (err: unknown) => (err instanceof Error && KNOWN_ERRORS.test(err.message) ? err.message : 'не вдалося оновити')
 const isUrgent = (s: Status) => s.phase === 'warn' || s.phase === 'final' || s.phase === 'hard'
 
+// Помилки — лише власні фіксовані тексти: вони потрапляють у статус і до моделі.
 async function fetchFeed($: $, url: string): Promise<Feed> {
-  const res = await $.http.fetch(url, { headers: { accept: 'application/json' } })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  let res: Awaited<ReturnType<typeof $.http.fetch>>
+  try {
+    res = await $.http.fetch(url, { headers: { accept: 'application/json', 'user-agent': USER_AGENT } })
+  } catch {
+    throw new Error('мережа недоступна')
+  }
+  if (!res.ok) throw new Error(`HTTP ${Number(res.status)}`)
+  if (res.text.length > MAX_FEED_CHARS) throw new Error('завелика відповідь')
   return parseFeed(res.text)
 }
 
