@@ -1,7 +1,8 @@
 {
   "name": "svitlo-guard",
   "owner": {
-    "name": "pokir"
+    "name": "kirilpolishchukdev-art",
+    "url": "https://github.com/kirilpolishchukdev-art"
   },
   "description": "Захист сесій Claude Code від відключень світла в Україні.",
   "plugins": [

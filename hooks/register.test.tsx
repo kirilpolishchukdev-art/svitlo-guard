@@ -159,3 +159,56 @@ describe('плашка над полем вводу', () => {
     await ui.unmount()
   })
 })
+
+describe('бережливе опитування svitlo.live', () => {
+  // Фід нового API: 3.1 у Києві з відключенням о `startKyiv` на годину.
+  function feed(withToday: boolean, startHour: number) {
+    const slots: Record<string, number> = {}
+    for (let h = 0; h < 24; h++) for (const m of ['00', '30']) slots[`${String(h).padStart(2, '0')}:${m}`] = h === startHour ? 2 : 1
+    const schedule = withToday ? { '3.1': { '2026-10-08': slots } } : { '3.1': {} }
+    return JSON.stringify({ date_today: '2026-10-08', date_tomorrow: '2026-10-09', regions: [{ cpu: 'kyiv', name_ua: 'Київ', schedule }] })
+  }
+
+  function api(on: On, newText: string, oldText: string) {
+    const calls: string[] = []
+    on('http.fetch', (_$, e) => {
+      const isNew = e.url.includes('dtek-api')
+      calls.push(isNew ? 'new' : 'old')
+      return { value: { status: 200, ok: true, headers: {}, text: isNew ? newText : oldText } }
+    })
+    return calls
+  }
+
+  test('далеко від відключення кеш 20-хвилинної давності не оновлюється', async ($, on) => {
+    const far = { ...PLAN, outages: [{ start: NOW + 5 * 60 * MIN, end: NOW + 6 * 60 * MIN }] }
+    world(on, { ...STORE, cache: { key: 'kyiv|3.1', fetchedAt: NOW - 20 * MIN, plan: far } })
+    const calls = api(on, feed(true, 18), feed(true, 18))
+    await $.command.run(svitlo(''))
+    expect(calls).toEqual([])
+  })
+
+  test('за 2 години до відключення той самий кеш оновлюється, лише новий фід', async ($, on) => {
+    const near = { ...PLAN, outages: [{ start: NOW + 2 * 60 * MIN, end: NOW + 3 * 60 * MIN }] }
+    world(on, { ...STORE, cache: { key: 'kyiv|3.1', fetchedAt: NOW - 20 * MIN, plan: near } })
+    const calls = api(on, feed(true, 15), feed(true, 15))
+    const out = await $.command.run(svitlo(''))
+    expect(calls).toEqual(['new'])
+    expect(out.text).toContain('08.10: 15:00–16:00')
+  })
+
+  test('старий фід не частіше ніж раз на 30 хв', async ($, on) => {
+    const near = { ...PLAN, outages: [{ start: NOW + 60 * MIN, end: NOW + 90 * MIN }] }
+    world(on, { ...STORE, cache: { key: 'kyiv|3.1', fetchedAt: NOW - 16 * MIN, oldAt: NOW - 16 * MIN, plan: near } })
+    const calls = api(on, feed(false, 15), feed(true, 15))
+    await $.command.run(svitlo(''))
+    expect(calls).toEqual(['new'])
+  })
+
+  test('/svitlo refresh качає все заново', async ($, on) => {
+    world(on, { ...STORE, cache: { key: 'kyiv|3.1', fetchedAt: NOW - MIN, oldAt: NOW - MIN, plan: PLAN } })
+    const calls = api(on, feed(false, 15), feed(true, 15))
+    const out = await $.command.run(svitlo('refresh'))
+    expect(calls).toEqual(['new', 'old'])
+    expect(out.text).toContain('08.10: 15:00–16:00')
+  })
+})

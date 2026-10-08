@@ -32,18 +32,20 @@ import {
 type $ = EngineInterface
 
 type Config = { region: string; regionName: string; queue: string; lead: number }
-type Cache = { key: string; fetchedAt: number; plan: Plan | null; error?: string; failedAt?: number }
+// oldAt — коли востаннє качали старий фід (план узято з нього).
+type Cache = { key: string; fetchedAt: number; plan: Plan | null; oldAt?: number; error?: string; failedAt?: number }
 type SessionRecord = { id: string; cwd: string; outageStart: number; outageEnd: number; recordedAt: number }
 
 const MIN = 60_000
-const FRESH_MS = 15 * MIN
 const RETRY_MS = 2 * MIN
-const STALE_MS = 45 * MIN
+const STALE_MS = 90 * MIN
+const NEAR_MS = 3 * 60 * MIN
+const OLD_FEED_MS = 30 * MIN
 const SNAPSHOT_MS = MIN
 const KEEP_SESSIONS_MS = 36 * 60 * MIN
 const AHEAD_NOTE_MIN = 90
 const MAX_FEED_CHARS = 5_000_000
-const USER_AGENT = 'svitlo-guard/0.1 (Claude Code plugin)'
+const USER_AGENT = 'svitlo-guard/0.1 (Claude Code plugin; +https://github.com/kirilpolishchukdev-art/svitlo-guard)'
 
 const bandRef = atom({ plugin: 'svitlo', key: 'band' } as const, null)
 const hiddenRef = atom({ plugin: 'svitlo', key: 'bandHidden' } as const, '')
@@ -76,8 +78,16 @@ async function fetchBoth($: $): Promise<{ fresh?: Feed; old?: Feed }> {
   return { fresh, old }
 }
 
-// Новий фід; старий — лише коли в новому немає графіка на сьогодні.
-async function fetchPlan($: $, region: string, queue: string): Promise<Plan | null> {
+// API svitlo.live безкоштовне, тож опитуємо його рідко: раз на 15 хв лише тоді, коли
+// відключення ближче ніж за 3 год; без графіка — раз на 30 хв; інакше раз на годину.
+function refreshEvery(plan: Plan | null, now: number): number {
+  if (!plan || plan.knownUntil === null || plan.knownUntil - now <= NEAR_MS) return 30 * MIN
+  const next = plan.outages.find(o => o.start > now)
+  return next && next.start - now <= NEAR_MS ? 15 * MIN : 60 * MIN
+}
+
+// Новий фід; старий — лише коли в новому немає графіка на сьогодні, і не частіше ніж раз на 30 хв.
+async function fetchPlan($: $, region: string, queue: string, prev: Cache | undefined, now: number): Promise<{ plan: Plan | null; oldAt?: number }> {
   let freshError: unknown
   const fresh = await fetchFeed($, NEW_API).then(
     feed => ({ feed, plan: planFrom(feed, region, queue) }),
@@ -88,13 +98,17 @@ async function fetchPlan($: $, region: string, queue: string): Promise<Plan | nu
   )
   const today = fresh.feed?.date_today
   const freshOk = !!fresh.plan && fresh.plan.days.length > 0 && (!today || fresh.plan.days.includes(today))
-  if (freshOk) return choosePlan(fresh)
+  if (freshOk) return { plan: choosePlan(fresh) }
+  if (prev?.plan && prev.oldAt && now - prev.oldAt < OLD_FEED_MS) {
+    const emergency = fresh.feed ? !!fresh.plan?.emergency : prev.plan.emergency
+    return { plan: { ...prev.plan, emergency }, oldAt: prev.oldAt }
+  }
   try {
     const feed = await fetchFeed($, OLD_API)
-    return choosePlan(fresh, { feed, plan: planFrom(feed, region, queue) })
+    return { plan: choosePlan(fresh, { feed, plan: planFrom(feed, region, queue) }), oldAt: now }
   } catch (err) {
     if (!fresh.feed) throw freshError ?? err
-    return choosePlan(fresh)
+    return { plan: choosePlan(fresh) }
   }
 }
 
@@ -156,7 +170,7 @@ async function doRefresh($: $, force: boolean): Promise<void> {
   const cache = (await $.store.get('cache')) as Cache | undefined
   const same = cache?.key === keyOf(cfg) ? cache : undefined
   if (!force && same) {
-    if (now - same.fetchedAt < FRESH_MS) return
+    if (now - same.fetchedAt < refreshEvery(same.plan, now)) return
     if (same.failedAt && now - same.failedAt < RETRY_MS) return
   }
   // Кілька відкритих сесій ділять один кеш: качає та, що перша взяла замок.
@@ -164,8 +178,9 @@ async function doRefresh($: $, force: boolean): Promise<void> {
   if (!force && lock > now) return
   await $.store.set('fetchLock', now + 30_000)
   try {
-    const plan = await fetchPlan($, cfg.region, cfg.queue)
-    await $.store.set('cache', { key: keyOf(cfg), fetchedAt: now, plan } satisfies Cache)
+    // Примусове оновлення (/svitlo refresh) качає все заново.
+    const { plan, oldAt } = await fetchPlan($, cfg.region, cfg.queue, force ? undefined : same, now)
+    await $.store.set('cache', { key: keyOf(cfg), fetchedAt: now, plan, oldAt } satisfies Cache)
   } catch (err) {
     await $.store.set('cache', {
       key: keyOf(cfg),
@@ -401,7 +416,7 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const plan = choosePlan({ feed: fresh, plan: planFrom(fresh, entry.id, queue) }, { feed: old, plan: planFrom(old, entry.id, queue) })
     await $.store.set('config', cfg)
-    await $.store.set('cache', { key: keyOf(cfg), fetchedAt: now, plan } satisfies Cache)
+    await $.store.set('cache', { key: keyOf(cfg), fetchedAt: now, plan, oldAt: old ? now : undefined } satisfies Cache)
     snapshot = null
     await tick($).catch(() => undefined)
     const v = await view($, true)

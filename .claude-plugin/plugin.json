@@ -2,7 +2,19 @@
   "name": "svitlo",
   "version": "0.1.0",
   "description": "Графіки відключень світла в Україні: агенти Claude Code завершують роботу за 20 хв до відключення, а сесію легко відновити.",
-  "author": { "name": "pokir" },
-  "keywords": ["ukraine", "power-outage", "svitlo", "блекаут", "графік відключень"],
-  "types": "./types/index.d.ts"
+  "author": {
+    "name": "kirilpolishchukdev-art",
+    "url": "https://github.com/kirilpolishchukdev-art"
+  },
+  "keywords": [
+    "ukraine",
+    "power-outage",
+    "svitlo",
+    "блекаут",
+    "графік відключень"
+  ],
+  "types": "./types/index.d.ts",
+  "homepage": "https://github.com/kirilpolishchukdev-art/svitlo-guard",
+  "repository": "https://github.com/kirilpolishchukdev-art/svitlo-guard",
+  "license": "MIT"
 }
